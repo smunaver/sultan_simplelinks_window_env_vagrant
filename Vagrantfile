@@ -9,6 +9,14 @@
 
 Vagrant.configure("2") do |config|
 
+  # Disable SMB synced folders (recommended for Windows DC labs)
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  # WinRM stability for Windows (VERY IMPORTANT)
+  config.winrm.retry_limit = 60
+  config.winrm.retry_delay = 10
+  config.winrm.timeout = 1800
+
   # Global Hyper-V provider settings
   config.vm.provider "hyperv" do |hv|
     hv.enable_virtualization_extensions = true
@@ -30,7 +38,7 @@ Vagrant.configure("2") do |config|
       hv.cpus  = 2
     end
 
-    dc.vm.provision "shell", privileged: true, inline: <<-PS
+    dc.vm.provision "shell", privileged: true, reboot: true, inline: <<-PS
       Write-Host "Expanding OS disk to 90GB"
       $partition = Get-Partition -DriveLetter C
       if ($partition.Size -lt 90GB) {
@@ -38,19 +46,26 @@ Vagrant.configure("2") do |config|
       }
 
       Write-Host "Configuring static IP"
-      $iface = (Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}).Name
-      New-NetIPAddress -InterfaceAlias $iface -IPAddress 192.168.0.61 -PrefixLength 24 -DefaultGateway 192.168.0.1 -ErrorAction SilentlyContinue
-      Set-DnsClientServerAddress -InterfaceAlias $iface -ServerAddresses 127.0.0.1
+      $iface = (Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }).Name
+      New-NetIPAddress -InterfaceAlias $iface `
+        -IPAddress 192.168.0.61 `
+        -PrefixLength 24 `
+        -DefaultGateway 192.168.0.1 `
+        -ErrorAction SilentlyContinue
+
+      Set-DnsClientServerAddress `
+        -InterfaceAlias $iface `
+        -ServerAddresses 127.0.0.1
 
       Write-Host "Installing AD DS"
       Install-WindowsFeature AD-Domain-Services -IncludeManagementTools
 
       Write-Host "Promoting server to Domain Controller"
       Import-Module ADDSDeployment
-      Install-ADDSForest \
-        -DomainName "simplelinks.ai" \
-        -DomainNetbiosName "SIMPLELINKS" \
-        -SafeModeAdministratorPassword (ConvertTo-SecureString "P@ssw0rd123" -AsPlainText -Force) \
+      Install-ADDSForest `
+        -DomainName "simplelinks.ai" `
+        -DomainNetbiosName "SIMPLELINKS" `
+        -SafeModeAdministratorPassword (ConvertTo-SecureString "P@ssw0rd123" -AsPlainText -Force) `
         -Force
     PS
   end
@@ -72,7 +87,7 @@ Vagrant.configure("2") do |config|
         hv.cpus  = 2
       end
 
-      w.vm.provision "shell", privileged: true, inline: <<-PS
+      w.vm.provision "shell", privileged: true, reboot: true, inline: <<-PS
         Write-Host "Expanding OS disk to 90GB"
         $partition = Get-Partition -DriveLetter C
         if ($partition.Size -lt 90GB) {
@@ -80,13 +95,19 @@ Vagrant.configure("2") do |config|
         }
 
         Write-Host "Setting DNS to Domain Controller"
-        $iface = (Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}).Name
-        Set-DnsClientServerAddress -InterfaceAlias $iface -ServerAddresses 192.168.0.61
+        $iface = (Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }).Name
+        Set-DnsClientServerAddress `
+          -InterfaceAlias $iface `
+          -ServerAddresses 192.168.0.61
 
         Write-Host "Joining domain simplelinks.ai"
         $secpass = ConvertTo-SecureString "P@ssw0rd123" -AsPlainText -Force
         $cred = New-Object System.Management.Automation.PSCredential("Administrator", $secpass)
-        Add-Computer -DomainName simplelinks.ai -Credential $cred -Force -Restart
+        Add-Computer `
+          -DomainName simplelinks.ai `
+          -Credential $cred `
+          -Force `
+          -Restart
       PS
     end
   end
@@ -96,7 +117,7 @@ end
 # NOTES
 # --------------------------------------------------
 # • Run PowerShell as Administrator
-# • First boot takes time (sysprep + reboots)
-# • Default Switch uses NAT + DHCP (OK for POCs)
+# • Expect multiple reboots (NORMAL)
+# • Default Switch = NAT + DHCP (OK for POCs)
 # • Password is LAB ONLY – rotate for real use
 # --------------------------------------------------
